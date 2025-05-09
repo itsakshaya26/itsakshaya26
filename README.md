@@ -1,61 +1,66 @@
-import re
-import nltk
-import numpy as np
-import pandas as pd
-import tensorflow as tf
-from nltk.corpus import stopwords
-from nltk.stem.porter import PorterStemmer
-from tensorflow.keras.models import Sequential
-from sklearn.model_selection import train_test_split
-from tensorflow.keras.preprocessing.text import one_hot
-from sklearn.metrics import confusion_matrix, accuracy_score
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.layers import Embedding, LSTM, Dense, Dropout
-
-nltk.download('stopwords')
 from google.colab import files
-uploaded = files.upload()
+uploaded = files.upload()  # Upload archive-1.zip
 import zipfile
-import io
+import os
 
-# The key should match the actual uploaded filename, which is 'archive.zip'
-with zipfile.ZipFile(io.BytesIO(uploaded['archive.zip']), 'r') as zip_ref:
-    zip_ref.extractall()
+zip_file_path = "archive-1.zip"
+extraction_dir = "data"
+
+# Extract zip contents
+with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+    zip_ref.extractall(extraction_dir)
+
+# Ensure the directory exists
+if not os.path.exists(extraction_dir):
+    os.makedirs(extraction_dir)
 import pandas as pd
-df = pd.read_csv('train.csv')
+
+csv_path = os.path.join(extraction_dir, "fake_news_dataset.csv")
+print(f"Loading dataset from: {csv_path}")
+
+df = pd.read_csv(csv_path)
+
+# Display basic info
+print("Columns:", df.columns.tolist())
+df.dropna(inplace=True)
+df.reset_index(drop=True, inplace=True)
 df.head()
-X = df['title']
-y = df['label']
-ps = PorterStemmer()
-corpus = []
+# Rename if needed (example)
+# df.rename(columns={'news': 'text', 'category': 'label'}, inplace=True)
 
-for i in range(len(X)):
-    # Convert X[i] to string explicitly to handle potential non-string values
-    text = re.sub('[^a-zA-Z]', ' ', str(X[i]))
-    text = text.lower().split()
-    text = [ps.stem(word) for word in text if word not in stopwords.words('english')]
-    corpus.append(' '.join(text))
-vocab_size = 5000
-sent_len = 20
+df = df[['text', 'label']]
+from sklearn.model_selection import train_test_split
 
-one_hot_encoded = [one_hot(text, vocab_size) for text in corpus]
-padded_docs = pad_sequences(one_hot_encoded, maxlen=sent_len, padding='post')
-X_final = np.array(padded_docs)
-y_final = np.array(y)
+X_train, X_test, y_train, y_test = train_test_split(
+    df['text'], df['label'], test_size=0.2, random_state=42)
+from sklearn.feature_extraction.text import TfidfVectorizer
 
-X_train, X_test, y_train, y_test = train_test_split(X_final, y_final, test_size=0.33, random_state=42)
-embedding_dim = 40
+vectorizer = TfidfVectorizer(stop_words='english', max_df=0.7)
+X_train_vec = vectorizer.fit_transform(X_train)
+X_test_vec = vectorizer.transform(X_test)
+from sklearn.linear_model import PassiveAggressiveClassifier
 
-model = Sequential()
-model.add(Embedding(vocab_size, embedding_dim, input_length=sent_len))
-model.add(Dropout(0.5))
-model.add(LSTM(100))
-model.add(Dropout(0.5))
-model.add(Dense(1, activation='sigmoid'))  # Add activation for binary classification
+classifier = PassiveAggressiveClassifier(max_iter=50)
+classifier.fit(X_train_vec, y_train)
+from sklearn.metrics import accuracy_score, confusion_matrix
 
-model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-model.summary()
-model.fit(X_train, y_train, validation_data=(X_test, y_test), batch_size=64, epochs=5)
-y_pred = (model.predict(X_test) > 0.5).astype("int32")
-print(confusion_matrix(y_test, y_pred))
-print("Accuracy:", accuracy_score(y_test, y_pred))
+y_pred = classifier.predict(X_test_vec)
+accuracy = accuracy_score(y_test, y_pred)
+print(f"Model Accuracy: {round(accuracy * 100, 2)}%")
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix
+
+# Automatically detect unique labels
+labels = sorted(df['label'].unique())
+
+# Compute confusion matrix
+conf_mat = confusion_matrix(y_test, y_pred, labels=labels)
+
+# Plot confusion matrix
+sns.heatmap(conf_mat, annot=True, fmt='d', cmap='Blues',
+            xticklabels=labels, yticklabels=labels)
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.title("Confusion Matrix")
+plt.show()
