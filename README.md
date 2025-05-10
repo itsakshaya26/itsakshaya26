@@ -1,66 +1,91 @@
+# Step 1: Install and Import Libraries
+!pip install -q nltk
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import re
+import string
+
+# NLP Libraries
+from sklearn.feature_extraction.text import TfidfVectorizer
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+import nltk
+nltk.download('stopwords')
+nltk.download('wordnet')
+
+# Modeling Libraries
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+
+# Step 2: Upload and Load Dataset from Colab
 from google.colab import files
-uploaded = files.upload()  # Upload archive-1.zip
+uploaded = files.upload()
+
 import zipfile
 import os
 
-zip_file_path = "archive-1.zip"
-extraction_dir = "data"
+# Extract zip
+with zipfile.ZipFile("archive-1.zip", 'r') as zip_ref:
+    zip_ref.extractall("data")
 
-# Extract zip contents
-with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
-    zip_ref.extractall(extraction_dir)
+# Load CSV
+df = pd.read_csv("data/fake_news_dataset.csv")
 
-# Ensure the directory exists
-if not os.path.exists(extraction_dir):
-    os.makedirs(extraction_dir)
-import pandas as pd
+# Step 3: Preprocessing
+def clean_text(text):
+    text = str(text).lower()
+    text = re.sub(r'\[.*?\]', '', text)
+    text = re.sub(r'https?://\S+|www\.\S+', '', text)
+    text = re.sub(r'<.*?>+', '', text)
+    text = re.sub(r'[%s]' % re.escape(string.punctuation), '', text)
+    text = re.sub(r'\n', '', text)
+    text = re.sub(r'\w*\d\w*', '', text)
+    return text
 
-csv_path = os.path.join(extraction_dir, "fake_news_dataset.csv")
-print(f"Loading dataset from: {csv_path}")
+lemmatizer = WordNetLemmatizer()
+stop_words = set(stopwords.words('english'))
 
-df = pd.read_csv(csv_path)
+def preprocess(text):
+    text = clean_text(text)
+    return ' '.join([lemmatizer.lemmatize(word) for word in text.split() if word not in stop_words])
 
-# Display basic info
-print("Columns:", df.columns.tolist())
-df.dropna(inplace=True)
-df.reset_index(drop=True, inplace=True)
-df.head()
-# Rename if needed (example)
-# df.rename(columns={'news': 'text', 'category': 'label'}, inplace=True)
+# Combine 'title' and 'text' if both exist
+if 'title' in df.columns and 'text' in df.columns:
+    df['content'] = df['title'].fillna('') + ' ' + df['text'].fillna('')
+else:
+    df['content'] = df['text']
 
-df = df[['text', 'label']]
-from sklearn.model_selection import train_test_split
+# Apply preprocessing
+df['clean_content'] = df['content'].apply(preprocess)
 
-X_train, X_test, y_train, y_test = train_test_split(
-    df['text'], df['label'], test_size=0.2, random_state=42)
-from sklearn.feature_extraction.text import TfidfVectorizer
+# Step 4: Vectorization
+vectorizer = TfidfVectorizer(max_features=5000)
+X = vectorizer.fit_transform(df['clean_content']).toarray()
+y = df['label'].values
 
-vectorizer = TfidfVectorizer(stop_words='english', max_df=0.7)
-X_train_vec = vectorizer.fit_transform(X_train)
-X_test_vec = vectorizer.transform(X_test)
-from sklearn.linear_model import PassiveAggressiveClassifier
+# Step 5: Split the data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-classifier = PassiveAggressiveClassifier(max_iter=50)
-classifier.fit(X_train_vec, y_train)
-from sklearn.metrics import accuracy_score, confusion_matrix
+# Step 6: Train the model
+model = LogisticRegression(max_iter=1000)
+model.fit(X_train, y_train)
 
-y_pred = classifier.predict(X_test_vec)
-accuracy = accuracy_score(y_test, y_pred)
-print(f"Model Accuracy: {round(accuracy * 100, 2)}%")
-import seaborn as sns
-import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix
+# Step 7: Evaluate the model
+y_pred = model.predict(X_test)
+print("Accuracy:", accuracy_score(y_test, y_pred))
+print("\nClassification Report:\n", classification_report(y_test, y_pred))
+print("\nConfusion Matrix:\n", confusion_matrix(y_test, y_pred))
 
-# Automatically detect unique labels
-labels = sorted(df['label'].unique())
+# Step 8: Sample Prediction
+def predict_fake_news(text):
+    processed = preprocess(text)
+    vectorized = vectorizer.transform([processed]).toarray()
+    prediction = model.predict(vectorized)
+    return "Fake" if prediction[0] == 1 else "Real"
 
-# Compute confusion matrix
-conf_mat = confusion_matrix(y_test, y_pred, labels=labels)
-
-# Plot confusion matrix
-sns.heatmap(conf_mat, annot=True, fmt='d', cmap='Blues',
-            xticklabels=labels, yticklabels=labels)
-plt.xlabel("Predicted")
-plt.ylabel("Actual")
-plt.title("Confusion Matrix")
-plt.show()
+# Example
+test_news = "Aliens have landed in Ohio and started farming."
+print(f"Prediction for: '{test_news}'\nResult: {predict_fake_news(test_news)}")
